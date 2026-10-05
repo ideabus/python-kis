@@ -11,8 +11,10 @@ from requests import Response
 
 from pykis import logging
 from pykis.__env__ import (
+    MAX_REQUEST_RETRIES,
     REAL_API_REQUEST_PER_SECOND,
     REAL_DOMAIN,
+    REQUEST_TIMEOUT,
     USER_AGENT,
     VIRTUAL_API_REQUEST_PER_SECOND,
     VIRTUAL_DOMAIN,
@@ -366,7 +368,7 @@ class PyKis:
             virtual_appkey = virtual_auth.key
             account = virtual_auth.account_number
 
-        virtual = virtual_appkey is not None and virtual_auth is not None
+        virtual = virtual_appkey is not None
 
         if id is None:
             raise ValueError("id를 입력해야 합니다.")
@@ -394,10 +396,10 @@ class PyKis:
 
         if isinstance(virtual_appkey, str):
             if virtual_secretkey is None:
-                raise ValueError("primary_secretkey를 입력해야 합니다.")
+                raise ValueError("virtual_secretkey를 입력해야 합니다.")
 
             virtual_appkey = KisKey(
-                id=id,
+                id=virtual_id,
                 appkey=virtual_appkey,
                 secretkey=virtual_secretkey,
             )
@@ -460,8 +462,8 @@ class PyKis:
             try:
                 self.token = KisAccessToken.load(virtual_token_path)
                 logging.logger.debug(f"실전도메인 API 접속 토큰을 불러왔습니다.")
-            except:
-                pass
+            except Exception as e:
+                logging.logger.debug(f"실전도메인 API 접속 토큰을 불러오지 못했습니다: {e}")
 
         if self.virtual:
             virtual_token_path = token_dir / self._get_hashed_token_name("virtual")
@@ -470,8 +472,8 @@ class PyKis:
                 try:
                     self.primary_token = KisAccessToken.load(virtual_token_path)
                     logging.logger.debug(f"모의도메인 API 접속 토큰을 불러왔습니다.")
-                except:
-                    pass
+                except Exception as e:
+                    logging.logger.debug(f"모의도메인 API 접속 토큰을 불러오지 못했습니다: {e}")
 
     def _save_cached_token(
         self,
@@ -551,6 +553,7 @@ class PyKis:
                     f.build(dist)
 
         rate_limit = self._rate_limiters[domain]
+        retries = 0
 
         while True:
             rate_limit.acquire(blocking_callback=self._rate_limit_exceeded)
@@ -564,6 +567,7 @@ class PyKis:
                 headers=request_headers,
                 params=params,
                 json=body,
+                timeout=REQUEST_TIMEOUT,
             )
 
             if resp.ok:
@@ -575,6 +579,12 @@ class PyKis:
                 data = None
 
             error_code = data.get("msg_cd") if data is not None else None
+
+            if error_code in ("EGW00201", "EGW00123"):
+                retries += 1
+
+                if retries > MAX_REQUEST_RETRIES:
+                    raise KisHTTPError(response=resp)
 
             match error_code:
                 case "EGW00201":

@@ -4,6 +4,7 @@ from os import PathLike
 
 from pykis.client.account import KisAccountNumber
 from pykis.client.appkey import KisKey
+from pykis.utils.fs import write_private_text
 
 __all__ = [
     "KisAuth",
@@ -61,8 +62,7 @@ class KisAuth:
 
     def save(self, path: str | PathLike[str]):
         """계좌 및 인증 정보를 JSON 파일로 저장합니다."""
-        with open(path, "w") as f:
-            json.dump(asdict(self), f)
+        write_private_text(path, json.dumps(asdict(self)))
 
     @classmethod
     def load(cls, path: str | PathLike[str]) -> "KisAuth":

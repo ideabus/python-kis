@@ -36,3 +36,8 @@ __license__ = "MIT"
 
 if sys.version_info < (3, 10):
     raise RuntimeError(f"PyKis에는 Python 3.10 이상이 필요합니다. (Current: {sys.version})")
+
+REQUEST_TIMEOUT = (10, 30)
+"""API 요청 타임아웃 (연결, 읽기) 초"""
+MAX_REQUEST_RETRIES = 10
+"""호출 유량 초과 및 토큰 만료 시 최대 재시도 횟수"""

@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta
-from multiprocessing import Lock
-from multiprocessing.synchronize import Lock as LockType
+from threading import Lock
 from typing import Any, TypeVar
 
 __all__ = [
@@ -24,7 +23,7 @@ class KisCacheStorage:
     """캐시 데이터"""
     _expire: dict[str, datetime]
     """캐시 만료 시간"""
-    _lock: LockType
+    _lock: Lock
     """Lock 객체"""
 
     def __init__(self):
@@ -37,15 +36,17 @@ class KisCacheStorage:
         with self._lock:
             self._data[key] = value
 
-            if expire is not None:
-                if isinstance(expire, timedelta):
-                    expire = datetime.now() + expire
-                elif isinstance(expire, (float, int)):
-                    expire = datetime.now() + timedelta(seconds=expire)
-                elif isinstance(expire, datetime):
-                    expire = expire
+            if expire is None:
+                # 이전에 저장된 만료 시간이 새 값에 적용되지 않도록 제거합니다.
+                self._expire.pop(key, None)
+                return
 
-                self._expire[key] = expire
+            if isinstance(expire, timedelta):
+                expire = datetime.now() + expire
+            elif isinstance(expire, (float, int)):
+                expire = datetime.now() + timedelta(seconds=expire)
+
+            self._expire[key] = expire
 
     def get(self, key: str, type: type[TObject], default: TObject | None = None) -> TObject | None:
         """캐시에서 데이터를 조회합니다."""
@@ -55,6 +56,7 @@ class KisCacheStorage:
 
             if (expire := self._expire.get(key)) is not None and expire < datetime.now():
                 del self._data[key]
+                self._expire.pop(key, None)
                 return default
 
             if not isinstance(data, type):

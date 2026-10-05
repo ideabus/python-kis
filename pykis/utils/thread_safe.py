@@ -1,5 +1,5 @@
 from functools import wraps
-from multiprocessing import Lock
+from threading import Lock
 from typing import Any, Callable
 
 global_lock = Lock()

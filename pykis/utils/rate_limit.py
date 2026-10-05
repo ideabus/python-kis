@@ -1,6 +1,5 @@
 import time
-from multiprocessing import Lock
-from multiprocessing.synchronize import Lock as LockType
+from threading import Lock
 from typing import Callable
 
 __all__ = [
@@ -28,7 +27,7 @@ class RateLimiter:
     """호출 횟수"""
     _last: float
     """마지막 호출 시간"""
-    _lock: LockType
+    _lock: Lock
     """Lock 객체"""
 
     def __init__(self, rate: int, period: float):
@@ -41,14 +40,14 @@ class RateLimiter:
         self.rate = rate
         self.period = period
         self._count = 0
-        self._last = 0
+        self._last = float("-inf")
         self._lock = Lock()
 
     @property
     def count(self) -> int:
         """기간 호출 횟수를 반환합니다."""
         with self._lock:
-            return 0 if time.time() - self._last > self.period else self._count
+            return 0 if time.monotonic() - self._last > self.period else self._count
 
     def acquire(self, blocking: bool = True, blocking_callback: Callable[[], None] | None = None) -> bool:
         """
@@ -62,7 +61,7 @@ class RateLimiter:
             호출 횟수 초과 여부, blocking=True일 경우 항상 True
         """
         with self._lock:
-            now = time.time()
+            now = time.monotonic()
             if now - self._last > self.period:
                 self._count = 0
                 self._last = now
@@ -73,9 +72,9 @@ class RateLimiter:
                 if blocking_callback is not None:
                     blocking_callback()
 
-                time.sleep(max(self.period - (time.time() - self._last) + 0.05, 0))
+                time.sleep(max(self.period - (time.monotonic() - self._last) + 0.05, 0))
                 self._count = 0
-                self._last = time.time()
+                self._last = time.monotonic()
 
             self._count += 1
             return True
