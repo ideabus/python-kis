@@ -11,10 +11,11 @@ from requests import Response
 
 from pykis import logging
 from pykis.__env__ import (
-    REQUEST_MAX_RETRIES,
-    REQUEST_TIMEOUT,
     REAL_API_REQUEST_PER_SECOND,
     REAL_DOMAIN,
+    REQUEST_RATE_LIMIT_MAX_WAIT,
+    REQUEST_TIMEOUT,
+    REQUEST_TOKEN_MAX_RETRIES,
     USER_AGENT,
     VIRTUAL_API_REQUEST_PER_SECOND,
     VIRTUAL_DOMAIN,
@@ -32,7 +33,7 @@ from pykis.responses.dynamic import KisObject, TDynamic
 from pykis.responses.types import KisDynamicDict
 from pykis.utils.rate_limit import RateLimiter
 from pykis.utils.thread_safe import thread_safe
-from pykis.utils.workspace import get_cache_path
+from pykis.utils.workspace import ensure_private_dir, get_cache_path
 
 
 class PyKis:
@@ -479,7 +480,7 @@ class PyKis:
             token_dir = Path(token_dir)
 
         token_dir = token_dir.resolve()
-        token_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        ensure_private_dir(token_dir)
 
         if domain is None or domain == "real":
             token = self.token if force else self._token
@@ -547,7 +548,9 @@ class PyKis:
                     f.build(dist)
 
         rate_limit = self._rate_limiters[domain]
-        retries = 0
+        rate_limit_waited = 0.0
+        rate_limit_attempts = 0
+        token_retries = 0
 
         while True:
             rate_limit.acquire(blocking_callback=self._rate_limit_exceeded)
@@ -574,25 +577,33 @@ class PyKis:
 
             error_code = data.get("msg_cd") if data is not None else None
 
-            # 아래 두 오류는 서버가 요청을 처리하기 전에 거부한 경우이므로
-            # 주문(POST)이라도 중복 실행 없이 재시도할 수 있습니다.
+            # 두 오류 모두 API 게이트웨이 단계의 거부이므로 요청이 처리되지 않았다고 간주하고 재시도합니다.
+            # (주문 POST 포함. 한국투자증권 공식 문서로 확인된 사실은 아니므로 주의)
             # 네트워크 오류·타임아웃은 처리 여부를 알 수 없어 재시도하지 않고 예외를 전파합니다.
-            if error_code in ("EGW00201", "EGW00123"):
-                retries += 1
+            if error_code == "EGW00201":
+                # Rate limit exceeded: 서버 측 유량 창(약 1초)이 지나길 점진적으로 대기합니다.
+                delay = min(0.1 * 2**rate_limit_attempts, 1.0)
 
-                if retries > REQUEST_MAX_RETRIES:
+                if rate_limit_waited + delay > REQUEST_RATE_LIMIT_MAX_WAIT:
                     raise KisHTTPError(response=resp)
 
-                if error_code == "EGW00201":
-                    # Rate limit exceeded
-                    logging.logger.warning("API 호출 횟수를 초과하였습니다.")
-                    sleep(0.1)
+                logging.logger.warning("API 호출 횟수를 초과하였습니다.")
+                sleep(delay)
+                rate_limit_waited += delay
+                rate_limit_attempts += 1
+                continue
+
+            if error_code == "EGW00123":
+                # Token expired: 다음 반복에서 토큰을 재발급합니다.
+                token_retries += 1
+
+                if token_retries > REQUEST_TOKEN_MAX_RETRIES:
+                    raise KisHTTPError(response=resp)
+
+                if domain == "real":
+                    self._token = None
                 else:
-                    # Token expired: 다음 반복에서 토큰을 재발급합니다.
-                    if domain == "real":
-                        self._token = None
-                    else:
-                        self._virtual_token = None
+                    self._virtual_token = None
 
                 continue
 

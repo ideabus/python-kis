@@ -16,8 +16,10 @@ VIRTUAL_API_REQUEST_PER_SECOND = 2
 
 REQUEST_TIMEOUT = (10, 30)
 """HTTP 요청 타임아웃 (연결, 읽기) 초"""
-REQUEST_MAX_RETRIES = 5
-"""토큰 만료, 호출 유량 초과 시 최대 재시도 횟수"""
+REQUEST_TOKEN_MAX_RETRIES = 2
+"""토큰 만료 시 재발급 후 최대 재시도 횟수"""
+REQUEST_RATE_LIMIT_MAX_WAIT = 10.0
+"""호출 유량 초과 시 재시도를 위해 대기하는 최대 누적 시간 (초)"""
 
 TRACE_DETAIL_ERROR: bool = False
 """

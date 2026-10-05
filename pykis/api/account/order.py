@@ -1003,7 +1003,9 @@ def _get_order_price(
         price = quote_data.close * Decimal("0.5")
         rounding = ROUND_CEILING
 
-    # 상·하한가를 알 수 없을 때의 대체 가격은 호가단위에 맞춥니다.
+    # 상·하한가를 알 수 없을 때의 대체 가격은 현재가 기준 호가단위에 맞춥니다.
+    # 하한은 더 작은 호가단위 구간으로 내려가므로 유효하지만, 상한은 더 큰 호가단위
+    # 구간으로 올라갈 수 있어 정확하지 않을 수 있습니다. (상·하한가가 없는 경우에만 사용)
     if quote_data.tick and quote_data.tick > 0:
         price = (price / quote_data.tick).to_integral_value(rounding=rounding) * quote_data.tick
 
