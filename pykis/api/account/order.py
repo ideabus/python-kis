@@ -1,5 +1,5 @@
 from datetime import datetime, tzinfo
-from decimal import Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -991,9 +991,23 @@ def _get_order_price(
     quote_data = quote(self, symbol=symbol, market=market)
 
     if price_setting == "upper":
-        return quote_data.high_limit or (quote_data.close * Decimal(1.5))
+        if quote_data.high_limit:
+            return quote_data.high_limit
+
+        price = quote_data.close * Decimal("1.5")
+        rounding = ROUND_FLOOR
     else:
-        return quote_data.low_limit or (quote_data.close * Decimal(0.5))
+        if quote_data.low_limit:
+            return quote_data.low_limit
+
+        price = quote_data.close * Decimal("0.5")
+        rounding = ROUND_CEILING
+
+    # 상·하한가를 알 수 없을 때의 대체 가격은 호가단위에 맞춥니다.
+    if quote_data.tick and quote_data.tick > 0:
+        price = (price / quote_data.tick).to_integral_value(rounding=rounding) * quote_data.tick
+
+    return price
 
 
 def domestic_order(

@@ -14,6 +14,11 @@ WEBSOCKET_MAX_SUBSCRIPTIONS = 40
 REAL_API_REQUEST_PER_SECOND = 20 - 1
 VIRTUAL_API_REQUEST_PER_SECOND = 2
 
+REQUEST_TIMEOUT = (10, 30)
+"""HTTP 요청 타임아웃 (연결, 읽기) 초"""
+REQUEST_MAX_RETRIES = 5
+"""토큰 만료, 호출 유량 초과 시 최대 재시도 횟수"""
+
 TRACE_DETAIL_ERROR: bool = False
 """
 경고: 해당 기능은 HTTPStatusCode 200이 아닌 경우. 상세한 요청, 응답을 출력합니다.

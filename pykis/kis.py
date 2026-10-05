@@ -11,6 +11,8 @@ from requests import Response
 
 from pykis import logging
 from pykis.__env__ import (
+    REQUEST_MAX_RETRIES,
+    REQUEST_TIMEOUT,
     REAL_API_REQUEST_PER_SECOND,
     REAL_DOMAIN,
     USER_AGENT,
@@ -366,19 +368,13 @@ class PyKis:
             virtual_appkey = virtual_auth.key
             account = virtual_auth.account_number
 
-        virtual = virtual_appkey is not None and virtual_auth is not None
+        virtual = virtual_appkey is not None
 
         if id is None:
             raise ValueError("id를 입력해야 합니다.")
 
         if appkey is None:
             raise ValueError("appkey를 입력해야 합니다.")
-
-        if virtual and virtual_id is None:
-            raise ValueError("virtual_id를 입력해야 합니다.")
-
-        if virtual and virtual_appkey is None:
-            raise ValueError("virtual_appkey를 입력해야 합니다.")
 
         if isinstance(appkey, str):
             if secretkey is None:
@@ -394,10 +390,10 @@ class PyKis:
 
         if isinstance(virtual_appkey, str):
             if virtual_secretkey is None:
-                raise ValueError("primary_secretkey를 입력해야 합니다.")
+                raise ValueError("virtual_secretkey를 입력해야 합니다.")
 
             virtual_appkey = KisKey(
-                id=id,
+                id=virtual_id or id,  # 하위 호환: virtual_id가 없으면 id 사용
                 appkey=virtual_appkey,
                 secretkey=virtual_secretkey,
             )
@@ -454,24 +450,24 @@ class PyKis:
             token_dir = Path(token_dir)
 
         token_dir = token_dir.resolve()
-        virtual_token_path = token_dir / self._get_hashed_token_name("real")
+        real_token_path = token_dir / self._get_hashed_token_name("real")
 
-        if virtual_token_path.exists():
+        if real_token_path.exists():
             try:
-                self.token = KisAccessToken.load(virtual_token_path)
+                self._token = KisAccessToken.load(real_token_path)
                 logging.logger.debug(f"실전도메인 API 접속 토큰을 불러왔습니다.")
-            except:
-                pass
+            except Exception as e:
+                logging.logger.warning("실전도메인 API 접속 토큰을 불러오지 못했습니다: %s", e)
 
         if self.virtual:
             virtual_token_path = token_dir / self._get_hashed_token_name("virtual")
 
             if virtual_token_path.exists():
                 try:
-                    self.primary_token = KisAccessToken.load(virtual_token_path)
+                    self._virtual_token = KisAccessToken.load(virtual_token_path)
                     logging.logger.debug(f"모의도메인 API 접속 토큰을 불러왔습니다.")
-                except:
-                    pass
+                except Exception as e:
+                    logging.logger.warning("모의도메인 API 접속 토큰을 불러오지 못했습니다: %s", e)
 
     def _save_cached_token(
         self,
@@ -483,7 +479,7 @@ class PyKis:
             token_dir = Path(token_dir)
 
         token_dir = token_dir.resolve()
-        token_dir.mkdir(parents=True, exist_ok=True)
+        token_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
 
         if domain is None or domain == "real":
             token = self.token if force else self._token
@@ -551,6 +547,7 @@ class PyKis:
                     f.build(dist)
 
         rate_limit = self._rate_limiters[domain]
+        retries = 0
 
         while True:
             rate_limit.acquire(blocking_callback=self._rate_limit_exceeded)
@@ -564,6 +561,7 @@ class PyKis:
                 headers=request_headers,
                 params=params,
                 json=body,
+                timeout=REQUEST_TIMEOUT,
             )
 
             if resp.ok:
@@ -576,22 +574,29 @@ class PyKis:
 
             error_code = data.get("msg_cd") if data is not None else None
 
-            match error_code:
-                case "EGW00201":
+            # 아래 두 오류는 서버가 요청을 처리하기 전에 거부한 경우이므로
+            # 주문(POST)이라도 중복 실행 없이 재시도할 수 있습니다.
+            # 네트워크 오류·타임아웃은 처리 여부를 알 수 없어 재시도하지 않고 예외를 전파합니다.
+            if error_code in ("EGW00201", "EGW00123"):
+                retries += 1
+
+                if retries > REQUEST_MAX_RETRIES:
+                    raise KisHTTPError(response=resp)
+
+                if error_code == "EGW00201":
                     # Rate limit exceeded
                     logging.logger.warning("API 호출 횟수를 초과하였습니다.")
                     sleep(0.1)
-                    continue
-
-                case "EGW00123":
-                    # Token expired
+                else:
+                    # Token expired: 다음 반복에서 토큰을 재발급합니다.
                     if domain == "real":
                         self._token = None
                     else:
                         self._virtual_token = None
 
-                case _:
-                    raise KisHTTPError(response=resp)
+                continue
+
+            raise KisHTTPError(response=resp)
 
     def fetch(
         self,
@@ -741,7 +746,7 @@ class PyKis:
 
     def close(self) -> None:
         """API 세션을 종료합니다."""
-        for session in self._sessions.values():
+        for session in getattr(self, "_sessions", {}).values():
             session.close()
 
     def __del__(self) -> None:

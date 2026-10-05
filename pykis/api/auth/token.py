@@ -7,6 +7,7 @@ from pykis.client.form import KisForm
 from pykis.responses.dynamic import KisObject
 from pykis.responses.types import KisDatetime, KisDynamic, KisInt, KisString
 from pykis.utils.timezone import TIMEZONE
+from pykis.utils.workspace import write_private_text
 
 if TYPE_CHECKING:
     from pykis.kis import PyKis
@@ -56,8 +57,7 @@ class KisAccessToken(KisDynamic, KisForm):
 
     def save(self, path: str | PathLike[str]):
         """접속 토큰을 파일로 저장합니다."""
-        with open(path, "w") as f:
-            json.dump(self.raw(), f)
+        write_private_text(path, json.dumps(self.raw()))
 
     @classmethod
     def load(cls, path: str | PathLike[str]):
